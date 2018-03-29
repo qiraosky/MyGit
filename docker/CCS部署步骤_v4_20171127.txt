@@ -1,0 +1,355 @@
+【离线安装Docker】
+
+//在线机器，下载rpm包
+yum install yum-plugin-downloadonly -y
+mkdir -p /root/docker/rpm
+yum install --downloadonly --downloaddir=/root/docker/rpm docker-io
+
+
+//离线机器
+mkdir -p /root/docker/rpm
+curl -o /root/docker/rpm/docker_rpm.tar.gz http://192.168.56.1:8020/docker_rpm_1.12.6_planB.tar.gz
+//强制安装，不检查依赖
+cd /root/docker/rpm
+rpm -ivh /root/docker/rpm/*.rpm --nodeps --force
+
+//启动docker
+cd /root/docker/
+nohup dockerd > docker.log &
+
+
+===========================================================================================
+【Docker】
+[1]需要用到的docker镜像
+
+中间件：
+docker.io/zookeeper:3.4
+docker.io/mysql:5.7
+docker.io/webcenter/activemq:5.14.3
+
+
+
+WEB：
+docker.io/tomcat:6
+
+SVC：
+docker.io/openjdk:7
+
+
+[2]制作 jdk 通用镜像
+Dockerfile
+
+
+===========================================================================================
+FROM openjdk:7
+
+ARG APP_HOME=/data
+
+ENV ENV_APP_HOME=${APP_HOME}
+ENV ENV_APP_NAME=
+
+CMD java -Duser.timezone=Asia/Shanghai -Djava.security.egd=file:/dev/./urandom -jar ${ENV_APP_HOME}/${ENV_APP_NAME}/${ENV_APP_NAME}.jar
+===========================================================================================
+
+构建镜像
+#docker build -t svc:1 .
+
+
+[3]调整网络
+docker network create --subnet=172.18.0.0/16 cloudshadownet
+
+
+[4]创建容器
+
+docker run -itd --name zookeeper --restart=always -v /etc/hosts:/etc/hosts -p 2181:2181 -p 2888:2888 -p 3888:3888 --net cloudshadownet --ip 172.18.0.3 zookeeper:3.4
+
+
+docker run --name='activemq' -d \
+-e 'ACTIVEMQ_CONFIG_NAME=amqp-srv1' \
+-e 'ACTIVEMQ_CONFIG_DEFAULTACCOUNT=false' \
+-e 'ACTIVEMQ_ADMIN_LOGIN=admin' -e 'ACTIVEMQ_ADMIN_PASSWORD=1qaz2wsx' \
+-p 8161:8161 \
+-p 61616:61616 \
+-p 61613:61613 \
+-p 5672:5672 \
+-p 61614:61614 \
+-p 1883:1883 \
+--net cloudshadownet \
+--ip 172.18.0.4 \
+webcenter/activemq:5.14.3
+
+数据库容器创建：
+docker run -d --name mysql -p 3306:3306 -e mysqld -e MYSQL_ROOT_PASSWORD=1qaz2wsx -e MYSQL_USER=ccs_admin -e MYSQL_PASSWORD=123456 -e MYSQL_DATABASE=pms --net cloudshadownet --ip 172.18.0.2 docker.io/mysql:5.6
+
+
+-------------------------------------------------------------------------------------------------------------
+【Hosts】
+
+访问地址为：
+http://portal.web.acloud.local
+
+
+[HOST]
+10.30.8.103 portal.web.acloud.local
+10.30.8.103 cas.web.acloud.local
+10.30.8.103 uc.web.acloud.local
+10.30.8.103 ct.web.acloud.local
+10.30.8.103 bpm.web.acloud.local
+10.30.8.103 crm.web.acloud.local
+10.30.8.103 pm.web.acloud.local
+
+
+[WEB]
+172.18.0.3 zk.acloud.local
+172.18.0.2 mysql.acloud.local
+
+172.18.0.22 cas.web.acloud.local
+172.18.0.23 portal.web.acloud.local
+172.18.0.24 uc.web.acloud.local
+172.18.0.25 ct.web.acloud.local
+172.18.0.26 bpm.web.acloud.local
+172.18.0.27 pm.web.acloud.local
+
+10.30.8.104 cache.service.acloud.local
+10.30.8.104 amq.service.acloud.local
+10.30.8.104 uc.service.acloud.local
+10.30.8.104 ct.service.acloud.local
+10.30.8.104 portal.service.acloud.local
+10.30.8.104 bpm.service.acloud.local
+10.30.8.104 crm.service.acloud.local
+10.30.8.104 pm.service.acloud.local
+
+[SVC]
+10.30.8.103 mysql.acloud.local
+10.30.8.103 zk.acloud.local
+10.30.8.103 amq.acloud.local
+
+172.18.0.12 cache.service.acloud.local
+172.18.0.13 amq.service.acloud.local
+172.18.0.14 uc.service.acloud.local
+172.18.0.15 ct.service.acloud.local
+172.18.0.16 portal.service.acloud.local
+172.18.0.17 bpm.service.acloud.local
+172.18.0.18 crm.service.acloud.local
+172.18.0.19 pm.service.acloud.local
+
+
+-------------------------------------------------------------------------------------------------------------
+【数据库数据导入】
+ 
+
+
+修改大小写敏感
+/etc/mysql/mysql.conf.d
+增加
+lower_case_table_names=1
+
+#docker cp mysql:/etc/mysql/mysql.conf.d/mysqld.cnf ./
+#docker cp ./mysqld.cnf mysql:/etc/mysql/mysql.conf.d/mysqld.cnf
+#docker restart mysql
+
+
+修改ccs_admin密码：
+修改为：123qwe!@#
+修改 ccs_admin 权限为，增删改查，视图增查权限
+
+[修改数据库字符集]
+将数据库字符集修改为 utf-8 
+
+
+
+[导入mq数据库]
+创建 mq 数据库
+导入 mq 数据库，执行mq.sql
+导入 pms 数据库
+  创建 pms 数据库结构
+  导入 pms 数据
+执行act_activiti.sql
+
+
+
+[如需要]修改 sys_app_info 中的配置
+[如需要]修改 sys_resources 中,含有 portal 前缀的配置
+
+
+ 
+
+
+
+
+ -------------------------------------------------------------------------------------------------------------
+【部署】
+[1]SVC程序
+
+1，部署脚本 run_svc_docker.sh
+===========================================================================================
+if [ "$1" = "" ]; then
+   echo "ERROR:No Container Name Input"
+   exit 0
+fi
+if [ "$2" = "" ]; then
+   echo "ERROR:No Container Port Input"
+   exit 0
+fi
+if [ "$3" = "" ]; then
+   echo "ERROR:No Container IP Input"
+   exit 0
+fi
+if [ "$4" = "debug" ]; then
+   echo "docker run -itd --name $1 --restart=always --privileged=true -v /etc/localtime:/etc/localtime -v /etc/hosts:/etc/hosts -v /data/services/$1:/data/$1 -e ENV_APP_NAME=$1 --net cloudshadownet --ip $4 -p $2:$2 svc:1"
+fi
+docker run -itd --name $1 --restart=always --privileged=true -v /etc/localtime:/etc/localtime -v /etc/hosts:/etc/hosts -v /data/services/$1:/data/$1 -e ENV_APP_NAME=$1 --net cloudshadownet --ip $4 -p $2:$2 svc:1
+===========================================================================================
+
+2，部署命令
+目录约束：cache-svc、amq-svc ...... 、pm-svc 必须在目录 /data/services/下
+
+sh run_svc_docker.sh cache-svc 20899 172.18.0.12 debug
+sh run_svc_docker.sh amq-svc 20898 172.18.0.13 debug
+sh run_svc_docker.sh uc-svc 20881 172.18.0.14 debug
+sh run_svc_docker.sh ct-svc 20888 172.18.0.15 debug
+sh run_svc_docker.sh portal-svc 20883 172.18.0.16 debug
+sh run_svc_docker.sh bpm-svc 20890 172.18.0.17 debug
+sh run_svc_docker.sh crm-svc 25858 172.18.0.18 debug
+sh run_svc_docker.sh pm-svc 20886 172.18.0.19 debug
+
+
+
+[2]WEB程序
+1，部署脚本 run_web_docker.sh
+===========================================================================================
+if [ "$1" = "" ]; then
+   echo "ERROR:No Container Name Input"
+   exit 0
+fi
+if [ "$2" = "" ]; then
+   echo "ERROR:No Container Port Input"
+   exit 0
+fi
+if [ "$3" = "" ]; then
+   echo "ERROR:No Container IP Input"
+   exit 0
+fi
+VER="$5"
+CNAME="$1"
+
+if [ "$VER" = "" ]; then
+   VER=6
+fi
+i
+if [ "$4" = "debug" ]; then
+   echo "docker run -itd --restart=always --name $1 --privileged=true -v /etc/localtime:/etc/localtime -v /etc/hosts:/etc/hosts -v /data/webapps/$1:/usr/local/tomcat/webapps/$1  -p $2:8080 --net cloudshadownet --ip $3  tomcat:$VER"
+fi
+
+docker run -itd --restart=always --name $1 --privileged=true -v /etc/localtime:/etc/localtime -v /etc/hosts:/etc/hosts -v /data/webapps/$1:/usr/local/tomcat/webapps/$1  -p $2:8080 --net cloudshadownet --ip $3  tomcat:$VER
+
+sleep 5
+echo "modify docker container $1"
+
+if [ "$4" = "debug" ]; then
+   echo "docker cp $VER/context.xml $CNAME:/usr/local/tomcat/conf/context.xml" 
+   echo "docker cp $VER/catalina.sh $CNAME:/usr/local/tomcat/bin/catalina.sh" 
+   echo "docker cp $VER/server.xml $CNAME:/usr/local/tomcat/conf/server.xml" 
+fi
+
+docker cp $VER/context.xml $CNAME:/usr/local/tomcat/conf/context.xml
+docker cp $VER/catalina.sh $CNAME:/usr/local/tomcat/bin/catalina.sh
+docker cp $VER/server.xml $CNAME:/usr/local/tomcat/conf/server.xml
+
+docker restart $CNAME
+===========================================================================================
+
+2，目录约束
+
+所有web程序必须在 /data/webapps 下
+配置文件 6 （catalina.sh、context.xml、server.xml）也在 /data/webapps 下
+
+catalina.sh 
+138 if [[ "$JAVA_OPTS" != *-Djava.security.egd=* ]]; then
+139     JAVA_OPTS="$JAVA_OPTS -Djava.security.egd=file:/dev/./urandom"
+140 fi
+
+context.xml
+20          <Loader delegate="true" />
+
+server.xml
+ 71                redirectPort="8443"  URIEncoding="UTF-8"/>
+
+
+
+
+3，部署命令
+
+docker run -itd --restart=always --name cas --privileged=true -v /etc/localtime:/etc/localtime -v /etc/hosts:/etc/hosts -v /data/webapps/cas:/usr/local/tomcat/webapps/cas -p 8080:8080 -p 8443:8443 --net cloudshadownet --ip 172.18.0.22 tomcat:6
+
+docker run -itd --restart=always --name portal --privileged=true -v /etc/localtime:/etc/localtime -v /etc/hosts:/etc/hosts -v /data/webapps/portal:/usr/local/tomcat/webapps/ROOT -p 80:8080 --net cloudshadownet --ip 172.18.0.23 tomcat:6
+
+sh run_web_docker.sh uc  8083 172.18.0.24 debug
+sh run_web_docker.sh ct  8081 172.18.0.25 debug
+sh run_web_docker.sh bpm 8082 172.18.0.26 debug
+sh run_web_docker.sh pm  8084 172.18.0.27 debug
+
+
+
+--------------------------------------------------------------------------------------------
+【排错】
+
+
+[空页面]
+如果产生空页面，或只有返回   null 的问题，则为权限问题
+
+找到此文件，在 common 包中
+/common/src/main/resources/app-security-cas.xml
+
+<security:intercept-url pattern="/**" access="ROLE_USER" />  
+修改为
+<security:intercept-url pattern="/**" filters="none"  />
+
+<security:custom-filter ref="casAuthenticationFilter" after="CAS_FILTER"/>
+修改为(注释掉)
+<!-- <security:custom-filter ref="casAuthenticationFilter" after="CAS_FILTER"/> --> 
+
+
+[BPM，UC空页面]
+
+需要将 sys_resources 中的 有 portal 标识的删除掉
+
+例如 /portal/paas/bpm/task/forMe.do 
+删除  portal 
+只留下 /paas/bpm/task/forMe.do
+
+一共25条数据
+
+
+[SQL_01 DDL 执行报错]
+请查询表中是存使用了 ndb 引擎，搜索 dnb ，修改成 InnoDB 可正常执行
+
+
+[流程图乱码]
+安装中文字体
+apt-get update
+apt-get install -y --force-yes --no-install-recommends fonts-wqy-microhei
+apt-get install -y --force-yes --no-install-recommends ttf-wqy-zenhei
+
+
+[数据保存出现乱码]
+查看 tomcat 是否为 utf-8 编码
+查看数据库字符集是否为 utf-8 编码
+给 app.properties 的数据库连接增加  ?useUnicode=true&characterEncoding=utf8
+如 
+jdbc.url=jdbc:mysql://mysql.acloud.local:3306/pms?useUnicode=true&characterEncoding=utf8
+
+
+[顺序]
+nohup sh cache-svc/start.sh &
+nohup sh amq-svc/start.sh &
+nohup sh uc-svc/start.sh &
+nohup sh ct-svc/start.sh &
+nohup sh portal-svc/start.sh &
+nohup sh bpm-svc/start.sh &
+nohup sh crm-svc/start.sh &
+nohup sh ForPM/pm-svc/start.sh &
+
+
+[Failed to bind NettyServer on]
+如遇此错误，多启动几次，或重启几次，或多创建几次容器可解决
